@@ -1,5 +1,13 @@
 import * as THREE from 'three';
 
+// A vertical field of view widened for tall screens, so the world keeps its sides on a phone held upright.
+// Wide screens keep the field they asked for; narrower ones get the horizontal view of `minAspect`.
+export function fitFov(fov, aspect, minAspect = 1.25, max = 80) {
+  if (aspect >= minAspect) return fov;
+  const half = Math.atan(Math.tan(THREE.MathUtils.degToRad(fov / 2)) * minAspect / aspect);
+  return Math.min(max, THREE.MathUtils.radToDeg(2 * half));
+}
+
 // A camera flight through a world. Points and look-targets are in the world's own coordinates,
 // so the flight follows the cube wherever it is. The first point is replaced by where the camera is now.
 export class Tour {
@@ -30,7 +38,7 @@ export class Tour {
     camera.position.copy(space.localToWorld(this.pc.getPoint(u)));
     camera.lookAt(space.localToWorld(this.tc.getPoint(u)));
     const ramp = Math.min(1, this.t / 0.08, (1 - this.t) / 0.08);
-    camera.fov = this.fov0 + (this.fov - this.fov0) * Math.max(0, ramp);
+    camera.fov = this.fov0 + (fitFov(this.fov, camera.aspect) - this.fov0) * Math.max(0, ramp);
     camera.updateProjectionMatrix();
     this.onProgress?.(u);
     if (this.t >= 1) this.stop();

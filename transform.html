@@ -41,7 +41,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { send, onCommand, faceWeights, makeDirector } from './shared/bridge.js';
-import { Tour } from './shared/tour.js';
+import { Tour, fitFov } from './shared/tour.js';
 import { makePanel, readShared, hashSeed } from './shared/knobs.js';
 import { makeDaylight } from './shared/daylight.js';
 import { addHero } from './shared/hero.js';
@@ -72,6 +72,10 @@ scene.background = new THREE.Color('#22325a');
 scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
 scene.environmentIntensity = 0.28;
 const camera = new THREE.PerspectiveCamera(32, innerWidth / innerHeight, 0.1, 200);
+// tall screens get a wider view so the whole cube fits (during a flight the tour keeps it fitted)
+let flight = null;   // the tour, once it exists
+function fitCamera() { const f = fitFov(32, camera.aspect); if (flight?.active) flight.fov0 = f; else camera.fov = f; camera.updateProjectionMatrix(); }
+fitCamera();
 camera.position.set(9, 8, 11);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true; controls.enablePan = false; controls.enableZoom = false;
@@ -525,7 +529,7 @@ addEventListener('keydown', (e) => {
   if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('clean');
   if (e.key === 'f' || e.key === 'F') { auto = false; goalReal = 0; goalFold = goalFold > 0.5 ? 0 : 1; }
 });
-addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight); });
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; fitCamera(); renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight); });
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
