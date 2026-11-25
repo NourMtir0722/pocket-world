@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Pocket World</title>
   <meta name="description" content="Six little worlds on one cube. No images, no models: every texture and shape is made by code when the page opens." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -27,7 +27,7 @@
     #label span { font-size: 14px; opacity: .7; }
     #hint { position: fixed; right: 28px; bottom: 26px; color: #e9e2d2; opacity: .5; font: 13px/1.4 ui-sans-serif, system-ui, sans-serif; pointer-events: none; }
     body.clean #label, body.clean #hint { display: none; }
-    @media (max-width: 600px) { #label { left: 16px; bottom: 16px; } #label b { font-size: 21px; } #hint { display: none; } }
+    @media (max-width: 600px) { #label { left: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); } #label b { font-size: 21px; } #hint { display: none; } }
     html.embed #label, html.embed #hint { display: none; }
   </style>
 </head>
@@ -920,6 +920,7 @@ send('caps', { panel: true, night: true }); send('light', { night: isNight() });
 const tour = new Tour({ camera, controls, space: world, duration: 32, points: tourPoints(), targets: tourTargets(),
   onProgress: (u) => { if (!tour.splashed && u > 0.5) { tour.splashed = true; send('sfx', { name: 'splash' }); } },
   onEnd: () => send('tour', { active: false }) });
+flight = tour;
 onCommand((c) => {
   if (c.cmd !== 'tour') return;
   if (tour.active) tour.stop();

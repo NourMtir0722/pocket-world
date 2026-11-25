@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Pocket World</title>
   <meta name="description" content="Six little worlds on one cube, seen three ways: low poly, cut paper, and paper turning real. Procedural, with light, a fly-through and sound. Everything is made by code." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -14,7 +14,7 @@
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
     html, body { margin: 0; height: 100%; overflow: hidden; background: #1e2a31; color: var(--ink); font-family: Fredoka, ui-rounded, system-ui, sans-serif; }
-    button { font-family: inherit; color: var(--ink); }
+    button { font-family: inherit; color: var(--ink); touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
     #view, #film { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; }
     #film { object-fit: contain; background: #0d1322; display: none; }
     body.film #film { display: block; } body.film #view { visibility: hidden; }
@@ -31,17 +31,17 @@
     #title p { margin: 4px 0 12px; color: var(--muted); font-size: 14px; line-height: 1.35; }
     #title .row { display: flex; gap: 8px; flex-wrap: wrap; }
 
-    #toolbar { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); display: flex; padding: 6px; max-width: calc(100vw - 24px); overflow-x: auto; }
+    #toolbar { position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; padding: 6px; max-width: calc(100vw - 24px); overflow-x: auto; }
     #toolbar button { border: 0; border-right: 2px solid rgba(43, 37, 48, .25); background: none; padding: 8px 16px 6px; cursor: pointer; display: grid; justify-items: center; gap: 2px; font-size: 14px; font-weight: 500; white-space: nowrap; }
     #toolbar button:last-child { border-right: 0; }
     #toolbar button .i { font-size: 20px; line-height: 1; }
-    #toolbar button:hover:not(:disabled) { background: var(--paper-2); border-radius: 8px; }
+    @media (hover: hover) { #toolbar button:hover:not(:disabled) { background: var(--paper-2); border-radius: 8px; } }
     #toolbar button[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-radius: 8px; }
     #toolbar button:disabled { opacity: .35; cursor: default; }
     #toolbar .gap { width: 10px; flex-shrink: 0; }
 
     #splash { position: fixed; inset: 0; background: rgba(43, 37, 48, .35); display: grid; place-items: center; z-index: 5; padding: 16px; }
-    #splash .card { width: 440px; max-width: 100%; padding: 22px; text-align: left; }
+    #splash .card { width: min(440px, calc(100vw - 32px)); padding: 22px; text-align: left; }
     #splash h2 { margin: 0 0 4px; font-size: 30px; font-weight: 600; }
     #splash p { margin: 0 0 18px; color: var(--muted); font-size: 15px; line-height: 1.45; }
     #splash .row { display: flex; gap: 10px; flex-wrap: wrap; }
@@ -49,19 +49,34 @@
     body.recording #toolbar { display: none; }
     #toolbar button.tap { animation: tap .45s ease; }
     @keyframes tap { 0% { transform: scale(1); } 35% { transform: scale(.88); background: var(--paper-2); } 100% { transform: scale(1); } }
-    #credit { position: fixed; left: 16px; top: 16px; padding: 6px 12px; font-size: 13px; color: var(--muted); z-index: 4; }
+    #credit { position: fixed; left: calc(16px + env(safe-area-inset-left)); top: calc(16px + env(safe-area-inset-top)); max-width: calc(100vw - 92px); padding: 6px 12px; font-size: 13px; color: var(--muted); z-index: 4; }
     #credit a { color: var(--ink); text-decoration: none; font-weight: 500; }
     #credit a:hover { text-decoration: underline; }
-    #gh { position: fixed; right: 16px; top: 16px; z-index: 4; padding: 7px; color: var(--ink); display: flex; }
+    #gh { position: fixed; right: calc(16px + env(safe-area-inset-right)); top: calc(16px + env(safe-area-inset-top)); z-index: 4; padding: 7px; color: var(--ink); display: flex; }
     #gh svg { width: 20px; height: 20px; display: block; }
     #gh:hover { background: var(--paper-2); }
     body.recording #credit, body.demo-rec-ask #credit, body.recording #gh, body.demo-rec-ask #gh, body.panel-open #gh { display: none; }
     #demoNote { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); padding: 8px 14px; font-size: 14px; display: none; }
     body.demo-rec-ask #demoNote { display: block; }
 
+    /* phones held upright: the toolbar becomes two rows of four (worlds, then tools) and fills the width */
     @media (max-width: 700px) {
-      #title { width: auto; right: 16px; } #title p { display: none; } #title .row { display: none; }
-      #toolbar button { padding: 8px 10px 6px; font-size: 12px; }
+      #toolbar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; width: calc(100vw - 24px); bottom: calc(12px + env(safe-area-inset-bottom)); }
+      #toolbar .gap { display: none; }
+      #toolbar button { border-right: 0; padding: 8px 2px 6px; font-size: 12px; white-space: normal; text-align: center; line-height: 1.15; min-height: 50px; }
+      #toolbar button .i { font-size: 18px; }
+      #credit { top: calc(12px + env(safe-area-inset-top)); left: 12px; font-size: 12px; padding: 5px 10px; }
+      #gh { top: calc(12px + env(safe-area-inset-top)); right: 12px; padding: 5px; }
+      #splash h2 { font-size: 26px; }
+      #splash .row .btn { flex: 1 1 auto; justify-content: center; }
+    }
+    /* phones on their side: little height, so one slim row with the icon beside the label */
+    @media (max-height: 500px) and (min-width: 701px) {
+      #toolbar { bottom: calc(8px + env(safe-area-inset-bottom)); padding: 4px; }
+      #toolbar button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 13px; }
+      #toolbar button .i { font-size: 15px; }
+      #credit { top: 8px; padding: 4px 10px; font-size: 12px; }
+      #gh { top: 8px; padding: 4px; }
     }
   </style>
 </head>

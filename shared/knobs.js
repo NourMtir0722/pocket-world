@@ -58,7 +58,25 @@ html:not(.embed) .kn { top: 70px; bottom: 16px; }
 .kn-hint { font-size: 12px; color: var(--muted); line-height: 1.45; margin-top: 8px; }
 .kn-foot { display: flex; gap: 6px; padding: 10px 14px 14px; border-top: 2px solid rgba(43,37,48,.15); }
 .kn-foot .kn-btn { flex: 1; }
-@media (max-width: 700px) { .kn { left: 16px; right: 16px; width: auto; top: auto; height: 58vh; bottom: 96px; } html:not(.embed) .kn { top: auto; bottom: 16px; } }
+.kn-open { top: calc(16px + env(safe-area-inset-top)); right: calc(16px + env(safe-area-inset-right)); }
+.kn-btn, .kn-tabs button, .kn-x { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+/* phones upright: a bottom sheet that sits above the hub's two-row toolbar (about 124px tall) */
+@media (max-width: 700px) {
+  .kn { left: 12px; right: 12px; width: auto; max-width: none; top: auto; height: 52vh; height: 52dvh; bottom: calc(132px + env(safe-area-inset-bottom)); }
+  html:not(.embed) .kn { top: auto; bottom: calc(16px + env(safe-area-inset-bottom)); height: 62vh; height: 62dvh; }
+  .kn.closed { transform: translateY(calc(100% + 160px)); }
+  .kn .ctl { padding: 10px 0; }
+  .kn .ctl input[type=range] { height: 28px; }
+  .kn .ctl input[type=checkbox] { width: 22px; height: 22px; }
+  .kn-tabs { flex-wrap: nowrap; overflow-x: auto; }
+  .kn-tabs button { flex-shrink: 0; padding: 5px 12px; }
+  .kn-seed input { font-size: 16px; }
+}
+/* phones on their side: a side sheet that clears the hub's slim toolbar */
+@media (max-height: 500px) and (min-width: 701px) {
+  .kn { top: 8px; bottom: 60px; } html:not(.embed) .kn { top: 56px; bottom: 8px; }
+  .kn-head { padding: 8px 12px 4px; } .kn-foot { padding: 8px 12px 10px; }
+}
 `;
 
 // schema items: { key, label, type: range|select|toggle|text, group, min, max, step, options, labels, default, live, format }
