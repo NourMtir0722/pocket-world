@@ -1,0 +1,20 @@
+{
+  "name": "pocket-world",
+  "version": "0.1.0",
+  "description": "Six little worlds on one cube, seen three ways: low poly, cut paper, and paper turning real. Procedural, lit, with a fly-through and generated sound.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "python3 serve.py 8765",
+    "art": "echo 'Open blender/paint-net.html in a browser at 3072x4096 to repaint the printed sheet'",
+    "build": "node scripts/build.mjs",
+    "deploy": "npm run build && npx wrangler deploy"
+  },
+  "keywords": [
+    "threejs",
+    "procedural",
+    "webaudio",
+    "blender",
+    "paper"
+  ]
+}

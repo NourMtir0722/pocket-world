@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pocket World</title>
+  <meta name="description" content="Six little worlds on one cube, seen three ways: low poly, cut paper, and paper turning real. Procedural, with light, a fly-through and sound. Everything is made by code." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    /* the same paper-card language as Builderland */
+    :root { --paper: #FBF5E8; --paper-2: #F3EAD6; --ink: #2B2530; --muted: #7D7164; --green: #6E9A4E; --shadow: 0 4px 0 rgba(43, 37, 48, 0.85); }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #1e2a31; color: var(--ink); font-family: Fredoka, ui-rounded, system-ui, sans-serif; }
+    button { font-family: inherit; color: var(--ink); }
+    #view, #film { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; }
+    #film { object-fit: contain; background: #0d1322; display: none; }
+    body.film #film { display: block; } body.film #view { visibility: hidden; }
+
+    .card { background: var(--paper); border: 3px solid var(--ink); border-radius: 14px; box-shadow: var(--shadow); }
+    .btn { border: 2.5px solid var(--ink); background: var(--paper); border-radius: 10px; padding: 8px 14px; font-size: 15px; font-weight: 500; cursor: pointer;
+      box-shadow: 0 3px 0 var(--ink); transition: transform .06s, box-shadow .06s; display: inline-flex; align-items: center; gap: 8px; }
+    .btn:active { transform: translateY(3px); box-shadow: 0 0 0 var(--ink); }
+    .btn.go { background: var(--green); color: #FFFDF6; }
+    .btn:disabled { opacity: .4; cursor: default; box-shadow: 0 3px 0 var(--ink); transform: none; }
+
+    #title { position: fixed; top: 16px; left: 16px; padding: 14px 16px; width: 300px; max-width: calc(100vw - 32px); }
+    #title h1 { margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
+    #title p { margin: 4px 0 12px; color: var(--muted); font-size: 14px; line-height: 1.35; }
+    #title .row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    #toolbar { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); display: flex; padding: 6px; max-width: calc(100vw - 24px); overflow-x: auto; }
+    #toolbar button { border: 0; border-right: 2px solid rgba(43, 37, 48, .25); background: none; padding: 8px 16px 6px; cursor: pointer; display: grid; justify-items: center; gap: 2px; font-size: 14px; font-weight: 500; white-space: nowrap; }
+    #toolbar button:last-child { border-right: 0; }
+    #toolbar button .i { font-size: 20px; line-height: 1; }
+    #toolbar button:hover:not(:disabled) { background: var(--paper-2); border-radius: 8px; }
+    #toolbar button[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-radius: 8px; }
+    #toolbar button:disabled { opacity: .35; cursor: default; }
+    #toolbar .gap { width: 10px; flex-shrink: 0; }
+
+    #splash { position: fixed; inset: 0; background: rgba(43, 37, 48, .35); display: grid; place-items: center; z-index: 5; padding: 16px; }
+    #splash .card { width: 440px; max-width: 100%; padding: 22px; text-align: left; }
+    #splash h2 { margin: 0 0 4px; font-size: 30px; font-weight: 600; }
+    #splash p { margin: 0 0 18px; color: var(--muted); font-size: 15px; line-height: 1.45; }
+    #splash .row { display: flex; gap: 10px; flex-wrap: wrap; }
+    body.entered #splash { display: none; }
+    body.recording #toolbar { display: none; }
+    #toolbar button.tap { animation: tap .45s ease; }
+    @keyframes tap { 0% { transform: scale(1); } 35% { transform: scale(.88); background: var(--paper-2); } 100% { transform: scale(1); } }
+    #credit { position: fixed; left: 16px; top: 16px; padding: 6px 12px; font-size: 13px; color: var(--muted); z-index: 4; }
+    #credit a { color: var(--ink); text-decoration: none; font-weight: 500; }
+    #credit a:hover { text-decoration: underline; }
+    body.recording #credit, body.demo-rec-ask #credit { display: none; }
+    #demoNote { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); padding: 8px 14px; font-size: 14px; display: none; }
+    body.demo-rec-ask #demoNote { display: block; }
+
+    @media (max-width: 700px) {
+      #title { width: auto; right: 16px; } #title p { display: none; } #title .row { display: none; }
+      #toolbar button { padding: 8px 10px 6px; font-size: 12px; }
+    }
+  </style>
+</head>
+<body>
+  <iframe id="view" title="Pocket World scene" allow="autoplay; fullscreen"></iframe>
+  <video id="film" src="blender/paper-cube-trim.mp4" muted playsinline loop preload="auto"></video>
+
+
+  <nav id="toolbar" class="card" aria-label="Worlds and tools">
+    <button data-theme="lowpoly"><span class="i">◆</span>Low poly</button>
+    <button data-theme="paper"><span class="i">✂</span>Paper</button>
+    <button data-theme="transform"><span class="i">✦</span>Paper → Real</button>
+    <button data-theme="film"><span class="i">▶</span>Film</button>
+    <span class="gap"></span>
+    <button id="tFly" aria-pressed="false"><span class="i">✈</span><span id="flyLabel">Fly</span></button>
+    <button id="tCust" aria-pressed="false"><span class="i">⚙</span>Customize</button>
+    <button id="tNight"><span class="i" id="nightIcon">☾</span><span id="nightLabel">Night</span></button>
+    <button id="tSound" aria-pressed="false"><span class="i" id="soundIcon">♪</span><span id="soundLabel">Sound</span></button>
+  </nav>
+
+  <div id="credit" class="card">made by <a href="https://x.com/noormtir" target="_blank" rel="noopener">@noormtir</a> · <a href="https://donate.stripe.com/9B68wPcAl5vQdtOgqmfrW0g" target="_blank" rel="noopener">buy me a coffee ☕</a></div>
+  <div id="demoNote" class="card">Pick <b>this tab</b> and turn on <b>Share tab audio</b></div>
+  <div id="splash">
+    <div class="card">
+      <h2>Pocket World</h2>
+      <p>Six little worlds on one cube, seen three ways. Change the seed, the season and the time of day, then fly through it. Every shape, light and sound is made by code.</p>
+      <div class="row">
+        <button class="btn go" id="enterSound">♪ Enter with sound</button>
+        <button class="btn" id="enterQuiet">Enter quietly</button>
+        <button class="btn" id="enterDemo" hidden>● Record the demo</button>
+      </div>
+    </div>
+  </div>
+
+<script type="module">
+import { SoundEngine } from './shared/sound.js';
+
+const THEMES = {
+  lowpoly: { src: 'lowpoly.html', sub: 'Six little worlds on one cube. Change the seed, the season and the light.' },
+  paper: { src: 'transform.html?mode=paper', sub: 'The same idea cut from paper. It folds flat and back into a cube.' },
+  transform: { src: 'transform.html', sub: 'One world, twice: paper first, then a scan line turns it real.' },
+  film: { src: null, sub: 'Rendered in Blender: one printed sheet folds itself into the world.' },
+};
+const order = Object.keys(THEMES);
+const $ = (id) => document.getElementById(id);
+const view = $('view'), film = $('film');
+let theme = null, sound = null, muted = false, touring = false, caps = {}, panelOpen = false;
+const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+const toPage = (msg) => view.contentWindow?.postMessage({ src: 'pw-hub', ...msg }, location.origin);
+
+function setCaps(c) {
+  caps = c;
+  $('tCust').disabled = !c.panel;
+  $('tNight').disabled = !c.night;
+  $('tFly').disabled = theme === 'film';
+}
+function setTheme(name) {
+  if (!THEMES[name] || name === theme) return;
+  theme = name; touring = false; panelOpen = false; updateFly(); updatePanel(); setCaps({});
+  document.querySelectorAll('#toolbar [data-theme]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.theme === name)));
+  document.body.classList.toggle('film', name === 'film');
+  if (name === 'film') { view.src = 'about:blank'; film.currentTime = 0; film.play().catch(() => {}); sound?.setMix({ birds: 0, wind: 0.1, water: 0, sea: 0, night: 0 }); }
+  else { film.pause(); const u = new URL(THEMES[name].src, location.href); new URLSearchParams(location.search).forEach((v, k) => u.searchParams.set(k, v)); view.src = u.pathname + u.search; }
+  sound?.setTheme(name);
+  history.replaceState(null, '', location.search + '#' + name); store.set('pw-theme', name);
+}
+function updateFly() { $('tFly').setAttribute('aria-pressed', String(touring)); $('flyLabel').textContent = touring ? 'Stop' : 'Fly'; }
+function updatePanel() { $('tCust').setAttribute('aria-pressed', String(panelOpen)); }
+function setNightLabel(night) { $('nightIcon').textContent = night ? '☀' : '☾'; $('nightLabel').textContent = night ? 'Day' : 'Night'; }
+function setMuted(m) { muted = m; sound?.setMuted(m); $('tSound').setAttribute('aria-pressed', String(!m && !!sound)); $('soundIcon').textContent = m ? '♪̸' : '♪'; $('soundLabel').textContent = m ? 'Muted' : 'Sound'; }
+async function ensureSound() { if (!sound) { sound = new SoundEngine(); sound.setTheme(theme); } sound.setMuted(muted); await sound.resume(); setMuted(muted); }
+
+const fly = () => theme !== 'film' && toPage({ cmd: 'tour' });
+const customize = () => caps.panel && toPage({ cmd: 'panel' });
+const night = () => caps.night && toPage({ cmd: 'night' });
+function handleKey(k) {
+  if (/^[1-4]$/.test(k)) setTheme(order[Number(k) - 1]);
+  else if ('tT'.includes(k)) fly();
+  else if ('cC'.includes(k)) customize();
+  else if ('nN'.includes(k)) night();
+  else if ('mM'.includes(k)) ensureSound().then(() => setMuted(!muted));
+}
+
+document.querySelectorAll('#toolbar [data-theme]').forEach((b) => b.addEventListener('click', () => { setTheme(b.dataset.theme); ensureSound(); }));
+$('tFly').onclick = fly;
+$('tCust').onclick = customize;
+$('tNight').onclick = night;
+$('tSound').onclick = () => ensureSound().then(() => setMuted(!muted));
+addEventListener('keydown', (e) => { if (e.target.closest?.('input, select, textarea')) return; handleKey(e.key); });
+$('enterSound').onclick = () => { document.body.classList.add('entered'); muted = false; ensureSound(); };
+$('enterQuiet').onclick = () => { document.body.classList.add('entered'); muted = true; setMuted(true); };
+
+addEventListener('message', (e) => {
+  if (e.origin !== location.origin || e.data?.src !== 'pw-page' || e.source !== view.contentWindow) return;
+  const d = e.data;
+  if (d.type === 'mix') sound?.setMix(d);
+  else if (d.type === 'sfx') sound?.sfx(d.name);
+  else if (d.type === 'tour') { touring = d.active; updateFly(); }
+  else if (d.type === 'caps') setCaps(d);
+  else if (d.type === 'panel') { panelOpen = d.open; updatePanel(); }
+  else if (d.type === 'light') setNightLabel(d.night);
+  else if (d.type === 'key') { if (d.key === 'd' || d.key === 'D') runDemo(); else handleKey(d.key); }
+});
+
+// the film's own sound: paper folds, the landing, the pop-ups (times match the trimmed render)
+const FILM_CUES = [[0.7, 'fold'], [1.12, 'fold'], [1.53, 'fold'], [1.95, 'fold'], [3.1, 'fold'], [5.5, 'thump'],
+  ...Array.from({ length: 14 }, (_, i) => [6.05 + i * 0.11 + (i % 3) * 0.03, 'pop'])];
+let lastFilmT = 0;
+(function filmLoop() {
+  if (theme === 'film' && sound) {
+    const t = film.currentTime;
+    if (t < lastFilmT) lastFilmT = 0;
+    FILM_CUES.forEach(([ct, name]) => { if (lastFilmT < ct && t >= ct) sound.sfx(name); });
+    lastFilmT = t;
+  }
+  requestAnimationFrame(filmLoop);
+})();
+
+// ---------- the demo: the storyboard, played by itself (D to run, Esc to stop) ----------
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let demoRun = 0, pageReady = null;
+function waitReady() { return new Promise((r) => { pageReady = r; setTimeout(r, 6000); }); }
+const readyDelay = 900;
+addEventListener('message', (e) => { if (e.data?.src === 'pw-page' && e.data.type === 'caps' && pageReady) { const r = pageReady; pageReady = null; setTimeout(r, readyDelay); } });
+const tap = (id) => { const b = $(id); b.classList.remove('tap'); void b.offsetWidth; b.classList.add('tap'); };
+async function go(name) { if (theme === name) return; const b = document.querySelector(`#toolbar [data-theme="${name}"]`); b.classList.remove('tap'); void b.offsetWidth; b.classList.add('tap'); const w = waitReady(); setTheme(name); await w; }
+const cmd = (c) => toPage(c);
+async function setNight(v) { tap('tNight'); cmd({ cmd: 'night', value: v }); }
+async function runDemo() {
+  const id = ++demoRun, live = () => id === demoRun;
+  document.body.classList.add('entered');
+  await ensureSound(); setMuted(false);
+  const w = waitReady(); theme = null; setTheme('lowpoly'); await w; if (!live()) return;
+  cmd({ cmd: 'night', value: false }); await sleep(1400);
+  // the cube steps back, turns right, then left
+  cmd({ cmd: 'cam', mul: 1.32, dur: 2.2 }); await sleep(2300); if (!live()) return;
+  cmd({ cmd: 'cam', az: 0.95, dur: 2.4 }); await sleep(2500);
+  cmd({ cmd: 'cam', az: -1.9, dur: 3.2 }); await sleep(3300);
+  cmd({ cmd: 'cam', az: 0.95, dur: 2 }); await sleep(2100); if (!live()) return;
+  await setNight(true); await sleep(3600); await setNight(false); await sleep(1600); if (!live()) return;
+  // paper, day then night
+  await go('paper'); cmd({ cmd: 'night', value: false }); await sleep(3200);
+  await setNight(true); await sleep(3400); await setNight(false); await sleep(1500); if (!live()) return;
+  // paper to real: the scan, then night and day
+  await go('transform'); cmd({ cmd: 'night', value: false }); await sleep(1500);
+  cmd({ cmd: 'real', value: true }); await sleep(3800);
+  await setNight(true); await sleep(3200); await setNight(false); await sleep(1500); if (!live()) return;
+  // a flight through each world
+  for (const w2 of ['lowpoly', 'paper', 'transform']) {
+    await go(w2); cmd({ cmd: 'night', value: false }); await sleep(600); if (!live()) return;
+    tap('tFly'); cmd({ cmd: 'tour', duration: 11 }); await sleep(11600);
+  }
+  await go('lowpoly'); await sleep(3000);
+  if (live()) finishDemo();
+}
+function stopDemo() { demoRun++; finishDemo(); }
+// recording: the tab (picture and sound) straight from the browser, saved as a file
+let rec = null, chunks = [];
+async function recordDemo() { await startRecording(); runDemo(); }
+async function startRecording() {
+  document.body.classList.add('demo-rec-ask');
+  try {
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 60, displaySurface: 'browser', width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: { suppressLocalAudioPlayback: false }, preferCurrentTab: true, selfBrowserSurface: 'include', systemAudio: 'include' });
+    document.body.classList.remove('demo-rec-ask');
+    const type = ['video/mp4;codecs=avc1,mp4a', 'video/webm;codecs=vp9,opus', 'video/webm'].find((t) => MediaRecorder.isTypeSupported(t));
+    chunks = []; rec = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: 16e6 });
+    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    rec.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      const blob = new Blob(chunks, { type }), a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = `pocket-world-demo.${type.startsWith('video/mp4') ? 'mp4' : 'webm'}`; a.click();
+    };
+    rec.start(500); await sleep(800);
+  } catch (e) { document.body.classList.remove('demo-rec-ask'); console.log('recording skipped:', e.message); }
+}
+function finishDemo() { if (rec && rec.state === 'recording') { setTimeout(() => rec.stop(), 400); } }
+addEventListener('keydown', (e) => { if (e.target.closest?.('input, select')) return; if (e.key === 'd' || e.key === 'D') runDemo(); if (e.key === 'Escape') stopDemo(); });
+
+const qs = new URLSearchParams(location.search);
+if (qs.has('demo')) { $('enterDemo').hidden = false; $('enterSound').onclick = () => runDemo(); }
+$('enterDemo').onclick = () => recordDemo();
+if (qs.has('skip')) document.body.classList.add('entered');
+if (qs.has('record')) document.body.classList.add('recording');
+const start = location.hash.slice(1);
+setTheme(THEMES[start] ? start : (THEMES[store.get('pw-theme')] ? store.get('pw-theme') : 'lowpoly'));
+</script>
+</body>
+</html>

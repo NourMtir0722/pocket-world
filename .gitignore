@@ -1,0 +1,14 @@
+.DS_Store
+node_modules/
+# Blender render output and caches (regenerate from blender/paper-cube.blend)
+blender/frames/
+blender/*.blend1
+blender/render.log
+blender/fold.pc2
+blender/base.npy
+dist/
+.wrangler/
+# local-only: promo cuts, untrimmed render, test stills
+video/
+blender/paper-cube.mp4
+blender/hero_f140.png

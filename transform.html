@@ -1,0 +1,632 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pocket World · Paper</title>
+  <meta name="description" content="A world cut from paper that turns into a finished 3D render, then folds flat again. Every sheet, shape and material is made by code." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@1,9..144,400;1,9..144,600&display=swap" rel="stylesheet" />
+  <script type="importmap">
+    { "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }
+  </script>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #22325a; }
+    canvas { display: block; }
+    #vignette { position: fixed; inset: 0; pointer-events: none;
+      background: radial-gradient(ellipse at 50% 45%, rgba(0,0,0,0) 50%, rgba(6,10,24,.5) 100%); }
+    #label { position: fixed; left: 28px; bottom: 24px; color: #f4ecdc; font-family: Fraunces, Georgia, serif; font-style: italic; pointer-events: none; }
+    #label b { display: block; font-size: 26px; font-weight: 600; }
+    #label span { font-size: 14px; opacity: .7; }
+    #hint { position: fixed; right: 28px; bottom: 26px; color: #f4ecdc; opacity: .5; font: 13px/1.4 ui-sans-serif, system-ui, sans-serif; pointer-events: none; text-align: right; }
+    body.clean #label, body.clean #hint { display: none; }
+    @media (max-width: 600px) { #label { left: 16px; bottom: 16px; } #label b { font-size: 21px; } #hint { display: none; } }
+    html.embed #label, html.embed #hint { display: none; }
+  </style>
+</head>
+<body>
+  <div id="vignette"></div>
+  <div id="label"><b>Paper to Real</b><span>the same world, twice</span></div>
+  <div id="hint">click: paper ⇄ real · F folds · drag to look<br />space pauses · H hides text</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { send, onCommand, faceWeights, makeDirector } from './shared/bridge.js';
+import { Tour } from './shared/tour.js';
+import { makePanel, readShared, hashSeed } from './shared/knobs.js';
+import { makeDaylight } from './shared/daylight.js';
+import { addHero } from './shared/hero.js';
+
+const params = new URLSearchParams(location.search);
+if (params.has('clean')) document.body.classList.add('clean');
+let seed = 1;
+function rng() { seed |= 0; seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }
+let SEED_BASE = 11;
+const reseed = (n) => (seed = n * 7919 + SEED_BASE);
+const rr = (a, b) => a + (b - a) * rng();
+const pick = (a) => a[Math.floor(rng() * a.length)];
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+const H = 2, M = 0.14, IN = H - M;   // half size of the cube; frame margin of each picture
+const updaters = [];
+
+// ---------- renderer ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.0;
+renderer.localClippingEnabled = true;
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#22325a');
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.28;
+const camera = new THREE.PerspectiveCamera(32, innerWidth / innerHeight, 0.1, 200);
+camera.position.set(9, 8, 11);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.enablePan = false; controls.enableZoom = false;
+const hemi = new THREE.HemisphereLight('#fff6e6', '#3a4570', 0.9);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight('#fff1dc', 2.4);
+sun.position.set(6, 12, 7); sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -11, right: 11, top: 11, bottom: -11, near: 1, far: 40 });
+sun.shadow.bias = -0.0003; sun.shadow.normalBias = 0.015; sun.shadow.radius = 4;
+scene.add(sun);
+const rim = new THREE.DirectionalLight('#9fb4ff', 0.8); rim.position.set(-8, 3, -6); scene.add(rim);
+
+// the line where paper becomes real: paper keeps what is below it, the render keeps what is above
+const paperCut = new THREE.Plane(V(0, -1, 0), 100);
+const realCut = new THREE.Plane(V(0, 1, 0), -100);
+
+// ---------- the two material sets ----------
+const grain = (() => {
+  reseed(999);
+  const c = document.createElement('canvas'); c.width = c.height = 512; const g = c.getContext('2d');
+  g.fillStyle = '#fff'; g.fillRect(0, 0, 512, 512);
+  for (let i = 0; i < 40; i++) { const x = rr(0, 512), y = rr(0, 512), r = rr(40, 140);
+    const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, 'rgba(0,0,0,0.05)'); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr; g.fillRect(0, 0, 512, 512); }
+  for (let i = 0; i < 9000; i++) { g.fillStyle = `rgba(0,0,0,${rr(0.02, 0.08)})`; g.fillRect(rr(0, 512), rr(0, 512), 1, 1); }
+  g.lineWidth = 0.6;
+  for (let i = 0; i < 700; i++) { const x = rr(0, 512), y = rr(0, 512), a = rr(0, 6), l = rr(3, 12);
+    g.strokeStyle = `rgba(0,0,0,${rr(0.03, 0.09)})`; g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l); g.stroke(); }
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(0.45, 0.45); t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
+const WATER = new Set(['#a7d0d3', '#5ea2b4', '#2f6f8a', '#6fb0c4', '#a5d3dd']);
+const cache = new Map();
+function material(mode, color, glow = 0) {
+  const k = mode + color + glow;
+  if (cache.has(k)) return cache.get(k);
+  let m;
+  if (mode === 'paper') {
+    m = new THREE.MeshStandardMaterial({ color, map: grain, roughness: 1, envMapIntensity: 0.2, side: THREE.DoubleSide });
+  } else if (WATER.has(color)) {
+    m = new THREE.MeshPhysicalMaterial({ color, roughness: 0.08, clearcoat: 1, clearcoatRoughness: 0.05, envMapIntensity: 1.3 });
+  } else {
+    m = new THREE.MeshPhysicalMaterial({ color, roughness: 0.55, clearcoat: 0.25, clearcoatRoughness: 0.4, envMapIntensity: 1 });
+  }
+  if (glow) { m.emissive = new THREE.Color(color); m.emissiveIntensity = glow; m.userData.glow = glow; }
+  m.clippingPlanes = [mode === 'paper' ? paperCut : realCut]; m.clipShadows = true;
+  cache.set(k, m); return m;
+}
+const edgeMat = material('paper', '#fbf5e9');
+
+// ---------- shapes in picture coordinates (u to the right, v up the picture) ----------
+function poly(pts) {
+  let p = pts.filter((a, i) => { const b = pts[(i + pts.length - 1) % pts.length]; return Math.hypot(a[0] - b[0], a[1] - b[1]) > 1e-4; });
+  for (let pass = 0; pass < 3; pass++) p = p.filter((q, i, arr) => { const a = arr[(i + arr.length - 1) % arr.length], c = arr[(i + 1) % arr.length];
+    return Math.abs((q[0] - a[0]) * (c[1] - q[1]) - (q[1] - a[1]) * (c[0] - q[0])) > 1e-7; });
+  const s = new THREE.Shape(); p.forEach(([x, y], i) => (i ? s.lineTo(x, y) : s.moveTo(x, y))); s.closePath(); return s;
+}
+function profile(a, b, bottom, top, steps = 80) {
+  const pts = [[a, bottom], [b, bottom]];
+  for (let i = steps; i >= 0; i--) { const u = a + (b - a) * (i / steps); pts.push([u, Math.min(IN, Math.max(bottom + 0.012, top(u)))]); }
+  return poly(pts);
+}
+const frame = () => profile(-IN, IN, -IN, () => IN, 1);
+const circle = (x, y, r, n = 48) => poly(Array.from({ length: n }, (_, i) => [x + Math.cos(i / n * Math.PI * 2) * r, y + Math.sin(i / n * Math.PI * 2) * r]));
+function star(x, y, r, n = 5, inner = 0.45) {
+  return poly(Array.from({ length: n * 2 }, (_, i) => { const a = Math.PI / 2 + i * Math.PI / n, rad = i % 2 ? r * inner : r; return [x + Math.cos(a) * rad, y + Math.sin(a) * rad]; }));
+}
+const cloudShape = (x, y, w) => profile(x - w / 2, x + w / 2, y, (u) => { const k = (u - x) / (w / 2); return y + Math.sqrt(Math.max(0, 1 - k * k)) * w * 0.28 + Math.abs(Math.sin(u * 9)) * w * 0.06; }, 40);
+const tri = (x) => 1 - Math.abs(((x % 2) + 2) % 2 - 1) * 2;
+
+// a cut layer. Paper: a thin sheet with a pale edge. Real: a thick, rounded, glossy slab.
+function sheet(mode, shape, color, lift, glow = 0) {
+  let geo, mat;
+  if (mode === 'paper') {
+    geo = new THREE.ExtrudeGeometry(shape, { depth: 0.022, bevelEnabled: false, curveSegments: 18 }).rotateX(-Math.PI / 2);
+    mat = [material('paper', color, glow), edgeMat];
+  } else {
+    const b = new THREE.Box2().setFromPoints(shape.getPoints()), size = b.getSize(new THREE.Vector2());
+    const bev = Math.min(0.022, Math.min(size.x, size.y) * 0.16);
+    geo = new THREE.ExtrudeGeometry(shape, { depth: 0.045, bevelEnabled: true, bevelThickness: bev, bevelSize: bev, bevelSegments: 3, curveSegments: 18 }).rotateX(-Math.PI / 2);
+    geo.deleteAttribute('uv'); geo.deleteAttribute('normal');
+    geo = mergeVertices(geo, 1e-4); geo.computeVertexNormals();
+    const n = geo.attributes.normal;
+    for (let i = 0; i < n.count; i++) if (Math.hypot(n.getX(i), n.getY(i), n.getZ(i)) < 1e-6) n.setXYZ(i, 0, 1, 0);
+    mat = material('real', color, glow);
+  }
+  const m = new THREE.Mesh(geo, mat);
+  m.position.y = lift * (mode === 'paper' ? K.depth : 0.62); m.castShadow = m.receiveShadow = true;
+  return m;
+}
+const smooth = (geo, mode, color, glow) => { const m = new THREE.Mesh(geo, material(mode, color, glow)); m.castShadow = m.receiveShadow = true; return m; };
+// panel coordinates: picture point (u, v) at height h above the card -> (u, h, -v)
+const at = (u, v, h = 0) => V(u, h, -v);
+// a group whose "up" is up the picture (for 3D things standing on a side picture)
+function upright(mode, u, v, h) { const g = new THREE.Group(); g.position.copy(at(u, v, h)); g.rotation.x = -Math.PI / 2; return g; }
+
+// ---------- the five side pictures ----------
+function picture(mode, n, build) {
+  reseed(n);
+  const g = new THREE.Group();
+  const card = new THREE.Mesh(new THREE.BoxGeometry(2 * H, 0.07, 2 * H).translate(0, -0.035, 0), material(mode, '#f4ecdc'));
+  card.receiveShadow = card.castShadow = true; g.add(card);
+  const L = (shape, color, lift, glow) => { const m = sheet(mode, shape, color, lift, glow); g.add(m); return m; };
+  build(L, g, mode === 'real');
+  return g;
+}
+function sunDisc(L, g, real, x, y, r, color) {
+  if (!real) return L(circle(x, y, r), color, 0.1);
+  const s = smooth(new THREE.SphereGeometry(r, 32, 16), 'real', color, 0.7); s.scale.y = 0.55; s.position.copy(at(x, y, 0.06)); g.add(s); return s;
+}
+function puffCloud(L, g, real, x, y, w) {
+  if (!real) return L(cloudShape(x, y, w), '#fdf6ea', 0.14);
+  const c = new THREE.Group();
+  [[-0.32, 0.05, 0.16], [-0.12, 0.13, 0.22], [0.12, 0.12, 0.2], [0.32, 0.05, 0.15], [0, 0.03, 0.18]].forEach(([dx, dy, r]) => {
+    const p = smooth(new THREE.SphereGeometry(r * w * 1.1, 24, 12), 'real', '#fbf7f0'); p.position.copy(at(x + dx * w, y + dy * w, 0.08)); p.scale.y = 0.6; c.add(p); });
+  g.add(c); return c;
+}
+const sea = (mode) => picture(mode, 1, (L, g, real) => {
+  L(frame(), '#f6c9a0', 0.005);
+  if (!real) {
+    const rays = L(star(0.7, 0.75, 0.62, 12, 0.72), '#f9e2a6', 0.05); rays.geometry.translate(-0.7, 0, 0.75); rays.position.x = 0.7; rays.position.z = -0.75;
+    updaters.push((t) => (rays.rotation.y = t * 0.15));
+  }
+  sunDisc(L, g, real, 0.7, 0.75, 0.36, '#f2915f');
+  puffCloud(L, g, real, -0.9, 1.1, 1.1); puffCloud(L, g, real, 1.0, 1.45, 0.8);
+  const far = L(profile(-IN, IN, -IN, (u) => -0.05 + Math.sin(u * 4) * 0.08), '#a7d0d3', 0.2);
+  let boat;
+  if (!real) {
+    boat = new THREE.Group(); boat.position.set(-0.5, 0.26 * K.depth, 0.02);
+    boat.add(sheet('paper', poly([[-0.32, 0], [0.32, 0], [0.22, -0.16], [-0.22, -0.16]]), '#fdf6ea', 0));
+    boat.add(sheet('paper', poly([[0, 0.02], [0, 0.55], [0.26, 0.04]]), '#e2604a', 0.03));
+    boat.add(sheet('paper', poly([[-0.02, 0.02], [-0.02, 0.42], [-0.22, 0.04]]), '#f4ecdc', 0.03));
+  } else {
+    boat = new THREE.Group(); boat.position.set(-0.5, 0.2, 0.02);
+    const inner = new THREE.Group(); inner.rotation.x = -Math.PI / 2; boat.add(inner);   // inner: +Y is up the picture, +Z points out of the card
+    const hull = new THREE.ExtrudeGeometry(poly([[-0.32, 0], [0.32, 0], [0.22, -0.15], [-0.22, -0.15]]), { depth: 0.16, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.025, bevelSegments: 3 }).translate(0, 0, -0.08);
+    inner.add(smooth(hull, 'real', '#fdf6ea'));
+    inner.add(smooth(new THREE.BoxGeometry(0.64, 0.035, 0.2).translate(0, -0.01, 0), 'real', '#b5653f'));
+    inner.add(smooth(new THREE.CylinderGeometry(0.012, 0.012, 0.6, 8).translate(0, 0.3, 0), 'real', '#7a5a40'));
+    inner.add(smooth(new THREE.ExtrudeGeometry(poly([[0.01, 0.04], [0.01, 0.56], [0.27, 0.06]]), { depth: 0.012, bevelEnabled: false }).translate(0, 0, -0.006), 'real', '#e2604a'));
+    inner.add(smooth(new THREE.ExtrudeGeometry(poly([[-0.01, 0.04], [-0.01, 0.43], [-0.22, 0.06]]), { depth: 0.012, bevelEnabled: false }).translate(0, 0, -0.006), 'real', '#f4ecdc'));
+  }
+  g.add(boat);
+  const mid = L(profile(-IN, IN, -IN, (u) => -0.55 + Math.sin(u * 3 + 1) * 0.11), '#5ea2b4', 0.3);
+  const near = L(profile(-IN, IN, -IN, (u) => -1.1 + Math.sin(u * 2.4 + 2) * 0.13), '#2f6f8a', 0.38);
+  updaters.push((t) => {
+    far.position.x = Math.sin(t * 0.6) * 0.03; mid.position.x = Math.sin(t * 0.8 + 1) * 0.04; near.position.x = Math.sin(t + 2) * 0.05;
+    boat.position.z = 0.02 - Math.sin(t * 1.2) * 0.05; boat.rotation.y = Math.sin(t * 1.2 + 0.6) * 0.08; boat.position.x = -0.5 + Math.sin(t * 0.25) * 0.5;
+  });
+});
+const hills = (L, layers) => layers.forEach(([fn, color, lift]) => L(profile(-IN, IN, -IN, fn), color, lift));
+const peaks = (mode) => picture(mode, 2, (L, g, real) => {
+  L(frame(), '#f3e4c8', 0.005);
+  sunDisc(L, g, real, -0.8, 0.9, 0.42, '#f2b36a');
+  puffCloud(L, g, real, 0.6, 1.2, 1.0);
+  hills(L, [
+    [(u) => 0.35 + tri(u * 0.55 + 0.3) * 0.75, '#cdbbe0', 0.15],
+    [(u) => -0.2 + tri(u * 0.7 + 0.9) * 0.6, '#a08ac2', 0.23],
+    [(u) => -0.7 + tri(u * 0.9 + 0.2) * 0.4, '#71609a', 0.31],
+  ]);
+  if (!real) L(profile(-IN, IN, -IN, (u) => -1.25 + Math.max(0, tri(u * 6)) * 0.45), '#3f5d50', 0.39);
+  else {
+    L(profile(-IN, IN, -IN, () => -1.3), '#3f5d50', 0.39);
+    for (let i = 0; i < 12; i++) {
+      const u = -1.7 + i * 0.31, pine = upright('real', u, -1.3, 0.3);
+      for (let k = 0; k < 3; k++) pine.add(smooth(new THREE.ConeGeometry(0.13 - k * 0.03, 0.2, 12).translate(0, 0.09 + k * 0.11, 0), 'real', k % 2 ? '#4b6e5c' : '#3f5d50'));
+      g.add(pine);
+    }
+  }
+  const birds = [];
+  for (let i = 0; i < 3; i++) birds.push(L(poly([[-0.09, 0], [0, -0.04], [0.09, 0], [0, -0.015]]), '#4a3f5e', 0.12));
+  updaters.push((t) => birds.forEach((b, i) => { b.position.x = ((t * 0.18 + i * 0.35) % 3.4) - 1.7; b.position.z = -(0.6 + i * 0.15 + Math.sin(t * 2 + i) * 0.05); }));
+});
+const night = (mode) => picture(mode, 3, (L, g, real) => {
+  L(frame(), '#283260', 0.005);
+  const stars = [];
+  for (let i = 0; i < 22; i++) {
+    const x = rr(-1.7, 1.7), y = rr(-0.1, 1.7), r = rr(0.04, 0.09);
+    const s = L(star(0, 0, r), '#ffe9a8', 0.03, 1.4); s.position.x = x; s.position.z = -y; stars.push(s);
+  }
+  updaters.push((t) => stars.forEach((s, i) => { const k = 0.8 + Math.sin(t * 2 + i * 1.7) * 0.25; s.scale.set(k, 1, k); }));
+  if (!real) { L(circle(0.85, 1.05, 0.38), '#f4ecd0', 0.06, 0.25); L(circle(1.02, 1.17, 0.33), '#283260', 0.09); }
+  else { const moon = smooth(new THREE.SphereGeometry(0.38, 32, 16), 'real', '#f4ecd0', 0.6); moon.scale.y = 0.5; moon.position.copy(at(0.85, 1.05, 0.06)); g.add(moon); }
+  hills(L, [[(u) => -0.3 + Math.sin(u * 1.3) * 0.3, '#36437f', 0.14], [(u) => -0.8 + Math.sin(u * 1.9 + 1) * 0.25, '#252e62', 0.22]]);
+  const town = (u) => { const k = Math.floor((u + 2) * 2.2); const h = [0.25, 0.45, 0.3, 0.6, 0.35, 0.5, 0.28, 0.42, 0.33][k % 9]; return -1.25 + h + (((u + 2) * 2.2) % 1 < 0.5 ? 0.12 : 0); };
+  L(profile(-IN, IN, -IN, town, 400), '#181e45', 0.3);
+  for (let i = 0; i < 16; i++) { const x = rr(-1.7, 1.7), y = rr(-1.65, town(x) - 0.12); L(poly([[x, y], [x + 0.07, y], [x + 0.07, y + 0.09], [x, y + 0.09]]), '#ffcf7a', 0.335, 1.6); }
+});
+const desert = (mode) => picture(mode, 4, (L, g, real) => {
+  L(frame(), '#f8dcae', 0.005);
+  sunDisc(L, g, real, 0.2, 0.55, 0.55, '#f4a259');
+  const mesa = (base, h, xs) => (u) => base + (xs.some(([a, b]) => u > a && u < b) ? h : 0);
+  hills(L, [
+    [mesa(-0.1, 0.8, [[-1.4, -0.5], [0.8, 1.5]]), '#eab07a', 0.14],
+    [mesa(-0.6, 0.6, [[-0.3, 0.6], [1.3, 2]]), '#cf7a4c', 0.22],
+    [(u) => -1.15 + Math.sin(u * 1.5) * 0.12, '#a5503a', 0.3],
+  ]);
+  [[-1.2, -1.3, 1.4], [0.9, -1.2, 1.1], [1.5, -1.45, 0.8]].forEach(([x, y, s]) => {
+    if (!real) {
+      L(poly([[x - 0.05 * s, y], [x + 0.05 * s, y], [x + 0.05 * s, y + 0.25 * s], [x + 0.14 * s, y + 0.25 * s], [x + 0.14 * s, y + 0.45 * s], [x + 0.2 * s, y + 0.45 * s], [x + 0.2 * s, y + 0.19 * s], [x + 0.05 * s, y + 0.19 * s], [x + 0.05 * s, y + 0.6 * s], [x - 0.05 * s, y + 0.6 * s], [x - 0.05 * s, y + 0.3 * s], [x - 0.16 * s, y + 0.3 * s], [x - 0.16 * s, y + 0.5 * s], [x - 0.21 * s, y + 0.5 * s], [x - 0.21 * s, y + 0.24 * s], [x - 0.05 * s, y + 0.24 * s]]), '#4f7a5a', 0.36);
+    } else {
+      const c = upright('real', x, y, 0.26); c.scale.setScalar(s);
+      const cap = (r, l) => new THREE.CapsuleGeometry(r, l, 6, 12);
+      c.add(smooth(cap(0.055, 0.5).translate(0, 0.3, 0), 'real', '#4f7a5a'));
+      c.add(smooth(cap(0.04, 0.1).rotateZ(Math.PI / 2).translate(0.1, 0.22, 0), 'real', '#4f7a5a'));
+      c.add(smooth(cap(0.04, 0.18).translate(0.17, 0.34, 0), 'real', '#4f7a5a'));
+      c.add(smooth(cap(0.04, 0.1).rotateZ(Math.PI / 2).translate(-0.1, 0.27, 0), 'real', '#4f7a5a'));
+      c.add(smooth(cap(0.04, 0.16).translate(-0.18, 0.38, 0), 'real', '#4f7a5a'));
+      g.add(c);
+    }
+  });
+});
+const under = (mode) => picture(mode, 5, (L) => {
+  L(frame(), '#5a4434', 0.005);
+  hills(L, [[(u) => 0.6 + Math.sin(u * 2) * 0.2, '#6e5240', 0.08], [(u) => -0.4 + Math.sin(u * 3 + 1) * 0.2, '#4a3628', 0.16]]);
+  for (let i = 0; i < 7; i++) { const ox = rr(-1.5, 1.5), oy = rr(-1.6, 1.1), k = rr(0.6, 1.1);
+    L(poly([[0, 0], [0.12, 0.18], [0, 0.36], [-0.12, 0.18]].map(([x, y]) => [ox + x * k, oy + y * k])), pick(['#7fe0ff', '#c79bff', '#ffd27a']), 0.2, 0.9); }
+});
+
+// ---------- the top: one layout from the knobs, built twice ----------
+const PSEASONS = {
+  autumn: { meadow: '#a9c47c', patch: '#97b56c', leaves: ['#e9894a', '#f1b44c', '#d9603e', '#f4e4c4'], pines: ['#3f6b4f', '#5f8f5a'] },
+  summer: { meadow: '#9cc46e', patch: '#86b25c', leaves: ['#5e9b4a', '#6fae52', '#82b85c', '#4f8a43'], pines: ['#2f6145', '#3f7350'] },
+  spring: { meadow: '#a8cf7c', patch: '#c4e09a', leaves: ['#f4b6c8', '#f7cfda', '#fdf3f6', '#e99ab4'], pines: ['#3f7350', '#5f8f5a'] },
+  winter: { meadow: '#e8eef2', patch: '#d6e1e9', leaves: ['#f4f8fa', '#dfe8ef', '#c9d8e2'], pines: ['#2f5a48', '#466f5c'] },
+};
+let S = PSEASONS.autumn;
+const rz = (x) => 0.25 + 0.35 * Math.sin(x * 1.2 + 0.4);
+let layout = { patches: [], trees: [], houses: [] };
+function makeLayout() {
+  reseed(6);
+  layout = { patches: [], trees: [], houses: [] };
+  for (let i = 0; i < 8; i++) layout.patches.push([rr(-1.4, 1.4), rr(-1.4, 1.4), rr(0.2, 0.4)]);
+  const roofs = ['#d9603e', '#5e7fb8', '#c9b28c', '#b7493a', '#6f9a6a'];
+  const onRiver = (x, v, w) => K.river && Math.abs(v - rz(x)) < w;
+  const nearMill = (x, v, r) => K.windmill && Math.hypot(x - 1.15, v + 1.05) < r;
+  const fixed = [[-0.75, -0.75, 0.42], [-0.15, -1.05, 0.32]];
+  for (let k = 0, tries = 0; layout.houses.length < K.houses && tries < 400; tries++) {
+    const [x, v, w] = k < fixed.length ? fixed[k++] : [rr(-1.5, 1.5), rr(-1.5, 1.5), rr(0.28, 0.4)];
+    if (k > fixed.length && (onRiver(x, v, 0.5) || nearMill(x, v, 0.5) || layout.houses.some((h) => Math.hypot(h.x - x, h.v - v) < 0.55))) continue;
+    layout.houses.push({ x, v, w, roof: roofs[layout.houses.length % roofs.length], rot: rr(-0.3, 0.3) });
+  }
+  for (let tries = 0; layout.trees.length < K.trees && tries < 1200; tries++) {
+    const x = rr(-1.65, 1.65), v = rr(-1.65, 1.65);
+    if (onRiver(x, v, 0.4) || nearMill(x, v, 0.4) || layout.houses.some((h) => Math.hypot(h.x - x, h.v - v) < 0.4) || layout.trees.some((q) => Math.hypot(q.x - x, q.v - v) < 0.36)) continue;
+    const pine = rng() < 0.3;
+    layout.trees.push({ x, v, pine, color: pine ? pick(S.pines) : pick(S.leaves), scale: rr(0.9, 1.3), rot: rr(0, 3) });
+  }
+}
+const river = (w) => { const pts = []; for (let x = -IN; x <= IN + 1e-6; x += 0.05) pts.push([x, rz(x) + w]); for (let x = IN; x >= -IN - 1e-6; x -= 0.05) pts.push([x, rz(x) - w]); return poly(pts); };
+const LAMPS = [];
+
+function buildTop(mode) {
+  const top = new THREE.Group(), real = mode === 'real';
+  const card = new THREE.Mesh(new THREE.BoxGeometry(2 * H, 0.07, 2 * H).translate(0, -0.035, 0), material(mode, '#f4ecdc'));
+  card.receiveShadow = true; top.add(card);
+  const L = (s, c, l, glow) => { const m = sheet(mode, s, c, l, glow); top.add(m); return m; };
+  let ground;
+  if (!real) {
+    L(frame(), S.meadow, 0.005);
+    layout.patches.forEach(([x, y, r]) => L(circle(x, y, r), S.patch, 0.02));
+    if (K.river) { L(river(0.24), '#7a8f55', 0.035); L(river(0.18), '#6fb0c4', 0.05); L(river(0.08), '#a5d3dd', 0.065); }
+    ground = 0.03;
+  } else {
+    // a meadow slab with the river carved out of it, and water sitting lower in the channel
+    const meadow = frame(); if (K.river) meadow.holes.push(river(0.2));
+    top.add(sheet('real', meadow, S.meadow, 0.0));
+    layout.patches.filter(([x, y, r]) => !K.river || Math.abs(y - rz(x)) > r + 0.25).forEach(([x, y, r]) => { const m = sheet('real', circle(x, y, r), S.patch, 0.0); m.position.y = 0.02; top.add(m); });
+    if (K.river) { const water = sheet('real', river(0.205), '#6fb0c4', 0); water.position.y = -0.03; top.add(water); }
+    ground = 0.065;
+  }
+  const put = (obj, x, v) => { obj.position.set(x, ground, -v); top.add(obj); return obj; };
+  // trees
+  const treeShape = (pine) => pine ? poly([[-0.025, 0], [0.025, 0], [0.025, 0.08], [0.17, 0.08], [0.05, 0.22], [0.13, 0.22], [0.03, 0.36], [0.09, 0.36], [0, 0.5], [-0.09, 0.36], [-0.03, 0.36], [-0.13, 0.22], [-0.05, 0.22], [-0.17, 0.08], [-0.025, 0.08]])
+    : (() => { const s = new THREE.Shape(); s.moveTo(-0.025, 0); s.lineTo(0.025, 0); s.lineTo(0.025, 0.15); s.absarc(0, 0.3, 0.16, -Math.PI / 2 + 0.16, Math.PI * 1.5 - 0.16, false); s.lineTo(-0.025, 0.15); s.closePath(); return s; })();
+  layout.trees.forEach((t) => {
+    const g = new THREE.Group();
+    if (!real) {
+      for (const r of [0, Math.PI / 2]) {
+        const m = new THREE.Mesh(new THREE.ExtrudeGeometry(treeShape(t.pine), { depth: 0.014, bevelEnabled: false, curveSegments: 12 }).translate(0, 0, -0.007), [material('paper', t.color), edgeMat]);
+        m.rotation.y = r; m.castShadow = m.receiveShadow = true; g.add(m);
+      }
+    } else if (t.pine) {
+      g.add(smooth(new THREE.CylinderGeometry(0.02, 0.03, 0.12, 10).translate(0, 0.06, 0), 'real', '#6b4a32'));
+      for (let k = 0; k < 3; k++) g.add(smooth(new THREE.ConeGeometry(0.17 - k * 0.045, 0.2, 16).translate(0, 0.16 + k * 0.12, 0), 'real', t.color));
+    } else {
+      g.add(smooth(new THREE.CylinderGeometry(0.022, 0.032, 0.2, 10).translate(0, 0.1, 0), 'real', '#6b4a32'));
+      [[0, 0.32, 0, 0.15], [0.07, 0.26, 0.04, 0.1], [-0.07, 0.27, -0.03, 0.1], [0.01, 0.41, -0.02, 0.1]].forEach(([x, y, z, r]) => {
+        const b = smooth(new THREE.SphereGeometry(r, 24, 14), 'real', t.color); b.position.set(x, y, z); g.add(b); });
+    }
+    g.scale.setScalar(t.scale); g.rotation.y = t.rot; put(g, t.x, t.v);
+  });
+  // houses
+  layout.houses.forEach((h) => {
+    const g = new THREE.Group(), wall = material(mode, '#f4ecdc');
+    const body = new THREE.Mesh(new THREE.BoxGeometry(h.w, 0.26, 0.3).translate(0, 0.13, 0), wall); body.castShadow = body.receiveShadow = true; g.add(body);
+    const slope = Math.atan2(0.14, 0.15), len = Math.hypot(0.14, 0.15) + 0.04;
+    for (const s of [-1, 1]) { const r = new THREE.Mesh(new THREE.BoxGeometry(h.w + 0.06, real ? 0.03 : 0.012, len), material(mode, h.roof));
+      r.position.set(0, 0.26 + 0.07, s * 0.075); r.rotation.x = s * slope; r.castShadow = true; g.add(r); }
+    const gable = new THREE.Mesh(new THREE.ExtrudeGeometry(poly([[-0.15, 0], [0.15, 0], [0, 0.14]]), { depth: h.w, bevelEnabled: false }).rotateY(Math.PI / 2).translate(-h.w / 2, 0.26, 0), wall);
+    gable.castShadow = true; g.add(gable);
+    for (const dx of [-h.w / 4, h.w / 4]) { const w = new THREE.Mesh(new THREE.PlaneGeometry(0.06, 0.07), material(mode, '#ffcf7a', 1.2)); w.position.set(dx, 0.15, 0.151); g.add(w); }
+    const lamp = new THREE.PointLight('#ffb35c', 0, 1.4, 2); lamp.position.set(0, 0.16, 0.32); g.add(lamp); LAMPS.push(lamp);
+    if (real) {
+      g.add(smooth(new THREE.BoxGeometry(0.06, 0.16, 0.06).translate(h.w * 0.25, 0.4, -0.05), 'real', '#a0563e'));
+      const puffs = [];
+      for (let k = 0; k < 6; k++) { const p = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 10), new THREE.MeshStandardMaterial({ color: '#f2efe9', transparent: true, depthWrite: false, clippingPlanes: [realCut] })); g.add(p); puffs.push(p); }
+      updaters.push((t) => puffs.forEach((p, k) => { const q = (t * 0.25 + k / 6) % 1;
+        p.position.set(h.w * 0.25 + q * 0.15, 0.5 + q * 0.6, -0.05); p.scale.setScalar(0.03 + q * 0.07); p.material.opacity = 0.7 * (1 - q) * Math.min(1, q * 8); }));
+    }
+    g.rotation.y = h.rot; put(g, h.x, h.v);
+  });
+  // windmill
+  if (K.windmill) {
+  const mill = new THREE.Group();
+  const towerG = real ? new THREE.CylinderGeometry(0.07, 0.13, 0.6, 24) : new THREE.CylinderGeometry(0.07, 0.13, 0.6, 4);
+  const tower = new THREE.Mesh(towerG.translate(0, 0.3, 0), material(mode, '#f4ecdc')); tower.castShadow = true; mill.add(tower);
+  const capRoof = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.14, real ? 24 : 4).translate(0, 0.67, 0), material(mode, '#d9603e')); capRoof.castShadow = true; mill.add(capRoof);
+  const blades = new THREE.Group(); blades.position.set(0, 0.55, 0.11); mill.add(blades);
+  for (let i = 0; i < 4; i++) {
+    const geo = real ? new THREE.BoxGeometry(0.08, 0.3, 0.012).translate(0.02, 0.17, 0) : new THREE.PlaneGeometry(0.08, 0.3).translate(0.02, 0.17, 0);
+    const b = new THREE.Mesh(geo, material(mode, i % 2 ? '#f9e2a6' : '#fdf6ea')); b.rotation.z = i * Math.PI / 2; b.castShadow = true; blades.add(b);
+  }
+  if (real) blades.add(smooth(new THREE.SphereGeometry(0.03, 16, 8), 'real', '#7a5a40'));
+  mill.rotation.y = -0.5; put(mill, 1.15, -1.05);
+  updaters.push((t) => (blades.rotation.z = -t * 1.2));
+  }
+  return top;
+}
+
+// ---------- two rigs with the same net: the paper one folds, the real one stays a cube ----------
+function buildRig(mode) {
+  const rig = new THREE.Group(), hinges = [];
+  const top = buildTop(mode); top.position.y = H; rig.add(top);
+  function hinge(parent, pivotAt, offset, axis, sign, pic, turn, delay) {
+    const pivot = new THREE.Group(); pivot.position.copy(pivotAt); parent.add(pivot);
+    const panel = new THREE.Group(); panel.position.copy(offset); pivot.add(panel);
+    pic.rotation.y = turn; panel.add(pic);
+    hinges.push({ pivot, axis, sign, delay }); return panel;
+  }
+  const front = hinge(rig, V(0, H, H), V(0, 0, H), 'x', 1, PICS[K.front](mode), 0, 0.0);
+  hinge(rig, V(H, H, 0), V(H, 0, 0), 'z', -1, PICS[K.right](mode), Math.PI / 2, 0.1);
+  hinge(rig, V(0, H, -H), V(0, 0, -H), 'x', -1, PICS[K.back](mode), Math.PI, 0.2);
+  hinge(rig, V(-H, H, 0), V(-H, 0, 0), 'z', 1, PICS[K.left](mode), -Math.PI / 2, 0.3);
+  hinge(front, V(0, 0, H), V(0, 0, H), 'x', 1, PICS[K.bottom](mode), 0, 0.45);
+  scene.add(rig);
+  return { rig, hinges };
+}
+const ease = (x) => (x < 0 ? 0 : x > 1 ? 1 : x * x * (3 - 2 * x));
+const setFold = ({ hinges }, p) => { const q = p * 1.45; hinges.forEach((h) => (h.pivot.rotation[h.axis] = h.sign * (Math.PI / 2) * ease(q - h.delay))); };
+const PICS = { sea, peaks, night, desert, under };
+
+// ---------- every knob, in one place (the panel is generated from this list) ----------
+const MODE = params.get('mode') === 'paper' ? 'paper' : 'real';
+const PIC_OPTS = ['sea', 'peaks', 'night', 'desert', 'under'];
+const PIC_LABELS = { sea: 'Sunset sea', peaks: 'Mountains', night: 'Night town', desert: 'Desert', under: 'Underground' };
+const hourFmt = (h) => { const hh = Math.floor(h) % 24, mm = Math.floor((h % 1) * 60); return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`; };
+const SCHEMA = [
+  { key: 'seed', type: 'text', default: 'paper-cove' },
+  { group: 'World', key: 'season', label: 'Season', type: 'select', options: ['autumn', 'summer', 'spring', 'winter'], default: 'autumn' },
+  { group: 'World', key: 'trees', label: 'Trees', type: 'range', min: 0, max: 32, step: 1, default: 16 },
+  { group: 'World', key: 'houses', label: 'Houses', type: 'range', min: 0, max: 5, step: 1, default: 2 },
+  { group: 'World', key: 'river', label: 'River', type: 'toggle', default: true },
+  { group: 'World', key: 'windmill', label: 'Windmill', type: 'toggle', default: true },
+  { group: 'World', key: 'confetti', label: 'Floating paper', type: 'range', min: 0, max: 160, step: 1, default: 70 },
+  { group: 'Sides', key: 'front', label: 'Front', type: 'select', options: PIC_OPTS, labels: PIC_LABELS, default: 'sea' },
+  { group: 'Sides', key: 'right', label: 'Right', type: 'select', options: PIC_OPTS, labels: PIC_LABELS, default: 'peaks' },
+  { group: 'Sides', key: 'back', label: 'Back', type: 'select', options: PIC_OPTS, labels: PIC_LABELS, default: 'night' },
+  { group: 'Sides', key: 'left', label: 'Left', type: 'select', options: PIC_OPTS, labels: PIC_LABELS, default: 'desert' },
+  { group: 'Sides', key: 'bottom', label: 'Underneath', type: 'select', options: PIC_OPTS, labels: PIC_LABELS, default: 'under' },
+  { group: 'Paper', key: 'depth', label: 'Layer depth', type: 'range', min: 0.1, max: 1, step: 0.05, default: 0.4 },
+  { group: 'Paper', key: 'autoplay', label: MODE === 'real' ? 'Play paper → real loop' : 'Play fold loop', type: 'toggle', default: true, live: true },
+  { group: 'Light', key: 'hour', label: 'Time of day', type: 'range', min: 0, max: 24, step: 0.05, default: 14, live: true, format: hourFmt },
+  { group: 'Light', key: 'cycle', label: 'Day cycle', type: 'toggle', default: false, live: true },
+  { group: 'Light', key: 'cycleSpeed', label: 'Cycle speed (hours / s)', type: 'range', min: 0.1, max: 3, step: 0.05, default: 0.6, live: true },
+  { group: 'Light', key: 'sunAngle', label: 'Sun direction', type: 'range', min: 0, max: 360, step: 1, default: 40, live: true, format: (v) => v + '°' },
+  { group: 'Light', key: 'softness', label: 'Shadow softness', type: 'range', min: 1, max: 12, step: 0.5, default: 4, live: true },
+  { group: 'Light', key: 'glow', label: 'Glow', type: 'range', min: 0, max: 1.6, step: 0.05, default: 0.3, live: true },
+  { group: 'Light', key: 'exposure', label: 'Exposure', type: 'range', min: 0.5, max: 1.7, step: 0.05, default: 1, live: true },
+  { group: 'Motion', key: 'spin', label: 'Spin', type: 'range', min: 0, max: 0.6, step: 0.01, default: 0.1, live: true },
+];
+const K = readShared(SCHEMA);
+
+// ---------- building (and rebuilding when a shape knob moves) ----------
+let PR = null, RR = null, bits = [];
+const ring = new THREE.Group();
+{
+  const glow = new THREE.MeshBasicMaterial({ color: '#d8f3ff' });
+  glow.color.multiplyScalar(4); glow.toneMapped = false;
+  const w = 2 * H + 0.5, th = 0.025;
+  for (let i = 0; i < 4; i++) { const b = new THREE.Mesh(new THREE.BoxGeometry(w, th, th), glow); b.rotation.y = i * Math.PI / 2; b.translateZ(w / 2); ring.add(b); }
+  const sheetMat = new THREE.MeshBasicMaterial({ color: '#bfe9ff', transparent: true, opacity: 0.08, side: THREE.DoubleSide, depthWrite: false });
+  ring.add(new THREE.Mesh(new THREE.PlaneGeometry(w, w).rotateX(-Math.PI / 2), sheetMat));
+}
+function makeBits() {
+  reseed(77);
+  const shapes = [new THREE.PlaneGeometry(0.16, 0.16), new THREE.CircleGeometry(0.09, 3), new THREE.CircleGeometry(0.08, 12)];
+  const bitMat = (c) => new THREE.MeshStandardMaterial({ color: c, map: grain, roughness: 1, side: THREE.DoubleSide });
+  for (let i = 0; i < K.confetti; i++) {
+    const m = new THREE.Mesh(pick(shapes), bitMat(pick(['#f4ecdc', '#f2915f', '#a9c47c', '#5ea2b4', '#f9e2a6', '#cdbbe0'])));
+    m.userData = { r: rr(4.2, 9), a: rr(0, Math.PI * 2), y: rr(-4, 5), s: rr(0.02, 0.06) * (rng() < 0.5 ? -1 : 1), sp: V(rr(-1, 1), rr(-1, 1), rr(-1, 1)), ph: rr(0, 6) };
+    m.scale.setScalar(rr(0.6, 1.3)); scene.add(m); bits.push(m);
+  }
+  updaters.push((t) => bits.forEach((m) => { const u = m.userData, a = u.a + t * u.s;
+    m.position.set(Math.cos(a) * u.r, u.y + Math.sin(t * 0.5 + u.ph) * 0.3, Math.sin(a) * u.r);
+    m.rotation.set(t * u.sp.x * 0.6, t * u.sp.y * 0.6, t * u.sp.z * 0.6); }));
+}
+function rebuild() {
+  ring.removeFromParent();
+  for (const r of [PR, RR]) if (r) { scene.remove(r.rig); r.rig.traverse((o) => o.geometry?.dispose()); }
+  bits.forEach((m) => { scene.remove(m); m.geometry.dispose(); m.material.dispose(); }); bits = [];
+  for (const m of cache.values()) if (m !== edgeMat) m.dispose();
+  cache.clear(); cache.set('paper#fbf5e90', edgeMat);
+  updaters.length = 0; LAMPS.length = 0;
+  SEED_BASE = hashSeed(K.seed) % 1000003; S = PSEASONS[K.season];
+  makeLayout();
+  PR = buildRig('paper');
+  RR = MODE === 'real' ? buildRig('real') : null;
+  if (RR) { setFold(RR, 1); RR.rig.add(ring); }
+  makeBits();
+}
+rebuild();
+
+// ---------- choreography ----------
+// real:  0-5 paper cube · 5-8 scan to real · 8-14 real · 14-17 scan back · 17-19.5 unfold · 19.5-23 flat · 23-25.5 fold
+// paper: folded 7s · unfold 2.5s · flat 4s · fold 2.5s
+const CYCLE = MODE === 'real' ? 26 : 16;
+function timeline(t) {
+  const c = t % CYCLE;
+  if (MODE === 'paper') return { realness: 0, fold: c < 7 ? 1 : c < 9.5 ? 1 - (c - 7) / 2.5 : c < 13.5 ? 0 : (c - 13.5) / 2.5 };
+  const realness = c < 5 ? 0 : c < 8 ? (c - 5) / 3 : c < 14 ? 1 : c < 17 ? 1 - (c - 14) / 3 : 0;
+  const fold = c < 17 ? 1 : c < 19.5 ? 1 - (c - 17) / 2.5 : c < 23 ? 0 : c < 25.5 ? (c - 23) / 2.5 : 1;
+  return { realness, fold };
+}
+let auto = K.autoplay && !['real', 'flat', 'fold'].some((k) => params.has(k));
+let real = MODE === 'real' ? Number(params.get('real') ?? 0) : 0, fold = params.has('flat') ? 0 : Number(params.get('fold') ?? 1);
+let goalReal = real, goalFold = fold;
+// a click (not a drag) toggles: paper mode folds and unfolds; real mode switches paper and real
+let downAt = null;
+renderer.domElement.addEventListener('pointerdown', (e) => (downAt = [e.clientX, e.clientY]));
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 6) return;
+  auto = false; K.autoplay = false; panel?.set('autoplay', false);
+  if (MODE === 'paper') { goalFold = goalFold > 0.5 ? 0 : 1; return; }
+  if (goalFold < 1) { goalFold = 1; return; }
+  goalReal = goalReal > 0.5 ? 0 : 1;
+});
+let paused = false;
+addEventListener('keydown', (e) => {
+  if (e.target.closest?.('input, select')) return;
+  if (e.code === 'Space') paused = !paused;
+  if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('clean');
+  if (e.key === 'f' || e.key === 'F') { auto = false; goalReal = 0; goalFold = goalFold > 0.5 ? 0 : 1; }
+});
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight); });
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.3, 0.5, 0.95);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+
+// ---------- light ----------
+const SKY = [[0, '#070b18'], [4.5, '#0b1128'], [5.6, '#2c2a4e'], [6.4, '#8a5a6a'], [7.6, '#22325a'], [16.8, '#22325a'], [17.9, '#8a4f5e'], [18.8, '#3e2f58'], [19.8, '#121834'], [24, '#070b18']];
+const day = makeDaylight({ scene, renderer, sun, hemi, fill: rim, getBloom: () => bloom, sky: SKY, shadowSpan: 11, sunPower: 2.4 });
+function applyLight() {
+  const st = day.apply(K);
+  for (const m of cache.values()) if (m.userData.glow && m.color.getHexString() === 'ffcf7a') m.emissiveIntensity = m.userData.glow * (0.35 + 1.9 * st.night);
+  LAMPS.forEach((l) => (l.intensity = 1.6 * st.night));
+}
+const isNight = () => { const h = ((K.hour % 24) + 24) % 24; return h < 6.2 || h > 19.2; };
+
+// ---------- the hero title behind the cube ----------
+const hero = addHero({ camera, scene, text: 'Pocket World', sub: MODE === 'paper' ? 'a world cut from paper' : 'paper first, then real', brightness: 0.9 });
+
+// ---------- fly through the meadow, then down to the sea and round to the desert ----------
+const P3 = (x, y, z) => new THREE.Vector3(x, y, z);
+const TOUR_POINTS = [P3(0, 0, 0), P3(-2.4, 3.4, -2.6), P3(-1.7, 2.45, -0.9), P3(-0.9, 2.32, -rz(-0.9)), P3(0.3, 2.32, -rz(0.3)), P3(1.2, 2.4, 0.2), P3(1.5, 2.8, 2.0),
+  P3(0.6, 1.0, 3.6), P3(-0.6, 0.0, 3.1), P3(-2.9, 0.2, 2.9), P3(-3.5, 0.4, 0.2), P3(-7, 5, 9)];
+const TOUR_TARGETS = [P3(0, 0, 0), P3(-0.75, 2.1, 0.75), P3(-0.4, 2.15, 0.9), P3(0.3, 2.1, -rz(0.3)), P3(1.15, 2.3, 1.05), P3(1.15, 2.35, 1.05), P3(0.2, 0.9, 2.0),
+  P3(-0.5, 0.1, 2.0), P3(-0.5, -0.4, 2.0), P3(-2.0, 0.0, 0.8), P3(-2.0, -0.3, 0), P3(0, 0, 0)];
+const space = () => (RR || PR).rig;
+const director = makeDirector({ keepDist: true });
+const tour = new Tour({ camera, controls, space: space(), duration: 30, points: TOUR_POINTS, targets: TOUR_TARGETS, onEnd: () => send('tour', { active: false }) });
+
+// ---------- the panel and the hub ----------
+let rebuildTimer = 0;
+const panel = makePanel({ schema: SCHEMA, values: K, page: MODE === 'paper' ? 'paper' : 'transform', onChange: (k, v) => {
+  K[k.key] = v;
+  if (k.key === 'autoplay') { auto = v; if (!v) { goalReal = real; goalFold = fold; } }
+  if (k.live) { applyLight(); return; }
+  clearTimeout(rebuildTimer); rebuildTimer = setTimeout(() => { rebuild(); applyLight(); }, 120);
+}, onToggle: (open) => send('panel', { open }) });
+onCommand((c) => {
+  if (c.cmd === 'cam') director.go(c);
+  if (c.cmd === 'real' && RR) { auto = false; goalFold = 1; goalReal = c.value ? 1 : 0; }
+  if (c.cmd === 'tour') { if (tour.active) tour.stop(); else { tour.duration = c.duration || 30; tour.space = space(); tour.start(); if (c.from) tour.t = c.from; send('tour', { active: true }); send('sfx', { name: 'whoosh' }); } }
+  if (c.cmd === 'panel') panel.toggle();
+  if (c.cmd === 'night') { K.cycle = false; panel.set('cycle', false); K.hour = (c.value ?? !isNight()) ? 22 : 14; panel.set('hour', K.hour); applyLight(); send('light', { night: isNight() }); }
+});
+send('theme', { theme: MODE === 'paper' ? 'paper' : 'transform' });
+send('caps', { panel: true, night: true }); send('light', { night: isNight() });
+
+function reportFaces() {
+  const f = faceWeights(space().worldToLocal(camera.position.clone()), H), w = { sea: 0, peaks: 0, night: 0, desert: 0, under: 0 };
+  for (const k of ['front', 'right', 'back', 'left']) w[K[k]] = Math.max(w[K[k]], f[k] * f.near);
+  send('mix', { birds: Math.min(1, (f.top * f.near + w.peaks * 0.5) * 1.3) * (1 - day.state.night * 0.85), wind: 0.2 + (w.desert + w.peaks * 0.6) * 0.7 + (1 - f.near) * 0.3,
+    water: 0, sea: w.sea, night: Math.max(w.night, day.state.night * 0.8 * f.near) });
+}
+
+// ---------- loop ----------
+let mixTimer = 0, lastFold = null, lastReal = null, lightTick = 0;
+const TOP = H + 1.0, BOTTOM = -H - 0.6;
+const clock = new THREE.Clock(); let t = Number(params.get('t') || 0);
+let rot = Number(params.get('rot') ?? 0.35);
+function tick() {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  if (!paused && !tour.active) { t += dt; rot += dt * K.spin; }
+  if (K.cycle && !paused) { K.hour = (K.hour + dt * K.cycleSpeed) % 24; if ((lightTick += dt) > 0.25) { lightTick = 0; panel.set('hour', +K.hour.toFixed(2)); } }
+  applyLight();
+  if (tour.active) { fold += (1 - fold) * Math.min(1, dt * 3); if (RR && fold > 0.999) real += (1 - real) * Math.min(1, dt * 1.5); }
+  else if (auto) ({ realness: real, fold } = timeline(t));
+  else {
+    real += (goalReal - real) * Math.min(1, dt * 1.6);
+    if (Math.abs(goalReal - real) < 0.002) real = goalReal;
+    const wantFold = real > 0.001 ? 1 : goalFold;
+    fold += (wantFold - fold) * Math.min(1, dt * 2.2);
+  }
+  if (!RR) real = 0;
+  const r = ease(real);
+  const cut = real <= 0.0005 ? 100 : real >= 0.9995 ? -100 : TOP + (BOTTOM - TOP) * r;
+  paperCut.constant = cut; realCut.constant = -cut;
+  PR.rig.visible = real < 0.9995;
+  if (RR) { RR.rig.visible = real > 0.0005; RR.rig.rotation.y = rot; }
+  ring.visible = real > 0.0005 && real < 0.9995; ring.position.y = cut;
+  setFold(PR, fold);
+  const open = 1 - fold;
+  PR.rig.position.set(0, -H * open * 0.2, -H * open);
+  PR.rig.rotation.y = rot;
+  if (lastFold !== null) { if (lastFold > 0.95 && fold <= 0.95) send('sfx', { name: 'unfold' }); if (lastFold < 0.05 && fold >= 0.05) send('sfx', { name: 'fold' }); }
+  if (lastReal !== null && ((lastReal < 0.02 && real >= 0.02) || (lastReal > 0.98 && real <= 0.98))) send('sfx', { name: 'scan' });
+  lastFold = fold; lastReal = real;
+  if ((mixTimer += dt) > 0.12) { mixTimer = 0; reportFaces(); }
+  hero.object.visible = !tour.active;
+  if (tour.active) tour.update(dt);
+  else {
+    director.update(dt, camera, controls.target);
+    const dist = (15.5 + ease(open) * 13) * director.state.mul, dir = camera.position.clone().sub(controls.target).normalize();
+    camera.position.copy(controls.target).addScaledVector(dir, dist);
+    controls.update();
+  }
+  for (const u of updaters) u(t);
+  composer.render();
+  requestAnimationFrame(tick);
+}
+tick();
+</script>
+</body>
+</html>
